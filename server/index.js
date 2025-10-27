@@ -13,7 +13,7 @@ const { apiVersionMiddleware, assetsMiddleware, clientMiddleware } = require('./
 const router = require('./api/index');
 const spacebarPing = require('./spacebar-compat/ping');
 const spacebarPolicies = require('./spacebar-compat/policies');
-const { Jimp } = require('jimp');
+const { Jimp, ResizeStrategy } = require('jimp');
 const dispatcher = require('./helpers/dispatcher');
 const permissions = require('./helpers/permissions');
 const config = globalUtils.config;
@@ -24,6 +24,7 @@ const udpServer = require('./udpserver');
 const rtcServer = require('./rtcserver');
 const os = require('os');
 const mrServer = require('./mrserver');
+const { Readable } = require("stream");
 
 app.set('trust proxy', 1);
 
@@ -209,7 +210,7 @@ app.get('/proxy/:url', async (req, res) => {
             return res.status(400).send('Invalid URL.');
         }
 
-        let contentType = response.headers.get('content-type') || 'image/jpeg';
+        let contentType = response.headers.get('content-type').toLowerCase() || 'image/jpeg';
 
         if (!contentType.startsWith('image/')) {
             return res.status(400).send('Only images are supported via this route. Try harder.');
@@ -250,7 +251,7 @@ app.get('/proxy/:url', async (req, res) => {
                 res.setHeader('Content-Length', contentLength);
             }
 
-            response.body.pipe(res);
+            Readable.fromWeb(response.body).pipe(res);
         }
     } catch (error) {
         logText(error, "error");
@@ -276,14 +277,6 @@ app.get('/attachments/:guildid/:channelid/:filename', async (req, res) => {
             return res.status(200).sendFile(baseFilePath);
         }
 
-        if (isNaN(parseInt(width)) || parseInt(width) > 800 || parseInt(width) < 0) {
-            width = '800';
-        }
-
-        if (isNaN(parseInt(height)) || parseInt(height) > 800 || parseInt(height) < 0) {
-            height = '800';
-        }
-
         const mime = req.params.filename.endsWith(".jpg") ? 'image/jpeg' : 'image/png';
 
         const resizedFileName = `${req.params.filename.split('.').slice(0, -1).join('.')}_${width}_${height}.${mime.split('/')[1]}`;
@@ -297,7 +290,23 @@ app.get('/attachments/:guildid/:channelid/:filename', async (req, res) => {
 
         const image = await Jimp.read(imageBuffer);
 
-        image.resize({ w: parseInt(width), h: parseInt(height)});
+        if (isNaN(parseInt(width)) || parseInt(width) > 2560 || parseInt(width) < 0) {
+            willResize = true;
+            width = 800;
+            height = image.height * 800 / image.width
+        } else {
+            width = parseInt(width);
+        }
+        
+        if ((isNaN(parseInt(height)) || parseInt(height) > 1440 || parseInt(height) < 0) && !willResize) {
+            willResize = true;
+            height = 800;
+            width = image.width / image.height * 800
+        } else {
+            height = parseInt(height);
+        }
+
+        image.resize({ w: width, h: height, mode: ResizeStrategy.BICUBIC});
 
         const resizedImage = await image.getBuffer(mime);
 
